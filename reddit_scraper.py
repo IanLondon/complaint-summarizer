@@ -23,32 +23,43 @@ logger = logging.getLogger(__name__)
 
 class MongoRedditStreamer(object):
     """Streams reddit posts into MongoDB"""
-    def __init__(self, r, mongoclient, db_name, collection_name, subreddit='all'):
+    def __init__(self, r, mongoclient, db_name, collection_name, subreddit='all', get_historic=False):
         """
         Arguments
         =========
         r :
-        the praw Reddit session, like `r = praw.Reddit()`
+            the praw Reddit session, like `r = praw.Reddit()`
 
         mongoclient:
-        An instance of pymongo.MongoClient()
+            An instance of pymongo.MongoClient()
 
         db_name :
-        the name of your MongoDB database
+            the name of your MongoDB database
 
         collection_name :
-        the name of the collection used to store comments
+            the name of the collection used to store comments
 
         subreddit :
-        the name of the subreddit to scrape
+            the name of the subreddit to scrape
 
-        mongoclient_args: go to pymongo.MongoClient
+        mongoclient_args:
+            go to pymongo.MongoClient
+
+        get_historic :
+            If True, get all posts in subreddit between start of subreddit and now.
+            If False, get past ~1000 posts and stream in the new ones.
         """
         self.r = r
         self.subreddit = subreddit
         self.client = mongoclient
         self.db = self.client[db_name]
         self.collection = self.db[collection_name]
+        if get_historic:
+            # get all posts from beginning of the subreddit to now
+            self.post_generator = praw.helpers.submissions_between(self.r, self.subreddit)
+        else:
+            # get past ~1000 posts and stream in new ones
+            self.post_generator = praw.helpers.submission_stream(self.r, self.subreddit)
     def convert_to_document(self, post):
         # get comments if there are any
         comments = {}
@@ -83,7 +94,7 @@ class MongoRedditStreamer(object):
         return post_doc
     def scrape_to_db(self):
         try:
-            new_posts = praw.helpers.submission_stream(self.r, self.subreddit)
+            new_posts = self.post_generator
             for post in new_posts:
                 try:
                     post_doc = self.convert_to_document(post)
@@ -117,7 +128,10 @@ if __name__ == "__main__":
 
     arg_parser = argparse.ArgumentParser(description='Scrapes then streams posts from given subreddit to MongoDB')
     arg_parser.add_argument('--subreddit', type=str, help='subreddit name (or "all" to get all posts')
-    arg_parser.add_argument('--db', type=str, help='name of MongoDB database to persist posts to')
+    arg_parser.add_argument('--db', type=str,
+        help='name of MongoDB database to persist posts to', default=config.DEFAULT_DB)
+    arg_parser.add_argument('--historic', action='store_true',
+        help='if included, get all historic posts. Otherwise just stream.')
 
     args = arg_parser.parse_args()
 
@@ -137,7 +151,8 @@ if __name__ == "__main__":
         mongoclient=pymongo.MongoClient(),
         db_name=args.db,
         collection_name=config.POSTS_COLLECTION,
-        subreddit=args.subreddit
+        subreddit=args.subreddit,
+        get_historic=args.historic
     )
 
     streamer.scrape_to_db()
