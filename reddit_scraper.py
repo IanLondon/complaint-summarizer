@@ -3,6 +3,7 @@ import requests
 import logging
 import datetime
 import sys
+import argparse
 
 import praw
 from praw.handlers import MultiprocessHandler
@@ -13,7 +14,9 @@ import secrets
 # document conversion adapted from
 # https://gist.github.com/ludar/fe29455bcd121bb79cf9
 
+# XXX: CONFIG
 LOGFILE = 'scrape.log'
+DEFAULT_DB = 'reddit_test'
 
 logging.basicConfig(format='%(levelname)s %(asctime)s %(message)s',
     level=logging.DEBUG,
@@ -105,20 +108,38 @@ if __name__ == "__main__":
     #     client_secret=secrets.SECRET,
     #     redirect_uri='http://127.0.0.1:65010/authorize_callback')
 
-    # handler = MultiprocessHandler()
     # use defaults for praw-multiprocess.
     # You have to have the `praw-multiprocess` server running!
     # XXX: This doesn't actually make it faster, since it's a 1:1 praw.Reddit object to thread...
+    # but you can scrape multiple subreddits at once
+    handler = MultiprocessHandler()
+    # handler=None
 
-    handler=None
     r = praw.Reddit('ubuntu:ian-scraper:v0.0.1 (by /u/ian-scraper)', handler=handler)
+
+    arg_parser = argparse.ArgumentParser(description='Scrapes then streams posts from given subreddit to MongoDB')
+    arg_parser.add_argument('--subreddit', type=str, help='subreddit name (or "all" to get all posts')
+    arg_parser.add_argument('--db', type=str, help='name of MongoDB database to persist posts to')
+
+    args = arg_parser.parse_args()
+
+    if not args.subreddit:
+        raise ValueError('subreddit is required.')
+
+    logger.info('{0}\nStarting new scrape process for subreddit: {1}\n{0}'.format('* ' * 12, args.subreddit))
+
+    if not args.db:
+        args.db = DEFAULT_DB
+        logger.info('db not specified, using default: "%s"' % args.db)
+    else:
+        logger.info('Using db: "%s"' % args.db)
 
     streamer = MongoRedditStreamer(
         r=r,
         mongoclient=pymongo.MongoClient(),
-        db_name='reddit_test',
+        db_name=args.db,
         collection_name='posts',
-        subreddit='arduino'
+        subreddit=args.subreddit
     )
 
     streamer.scrape_to_db()
