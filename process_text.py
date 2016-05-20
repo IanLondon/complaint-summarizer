@@ -197,17 +197,6 @@ if __name__ == "__main__":
 
     corpus = postman.fetch_posts(how='comments_as_docs', min_comments=10)
 
-    # this is necessary if you print some of the corpus before processing,
-    # since printing "uses up" the generator!
-    # corpus = list(corpus)[:100]
-    #
-    # # XXX: DEBUG. Just the first few documents
-    # for document in corpus[:10]:
-    #     print document
-    #     print '\n***********'
-    #
-    # print '\n========= P R E P R O C E S S I N G =========\n'
-
     prepro = Preprocessor(corpus).process()
     clean_corpus = prepro.corpus
 
