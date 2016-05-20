@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Scrape past 1000 posts from the given subreddit, including all comments
+# and store in MongoDB.
 import requests
 import logging
 import datetime
@@ -10,17 +12,13 @@ from praw.handlers import MultiprocessHandler
 import pymongo
 
 import secrets
-
+import config
 # document conversion adapted from
 # https://gist.github.com/ludar/fe29455bcd121bb79cf9
 
-# XXX: CONFIG
-LOGFILE = 'scrape.log'
-DEFAULT_DB = 'reddit_test'
-
 logging.basicConfig(format='%(levelname)s %(asctime)s %(message)s',
     level=logging.DEBUG,
-    filename=LOGFILE)
+    filename=config.LOGFILE)
 logger = logging.getLogger(__name__)
 
 class MongoRedditStreamer(object):
@@ -129,7 +127,7 @@ if __name__ == "__main__":
     logger.info('{0}\nStarting new scrape process for subreddit: {1}\n{0}'.format('* ' * 12, args.subreddit))
 
     if not args.db:
-        args.db = DEFAULT_DB
+        args.db = config.DEFAULT_DB
         logger.info('db not specified, using default: "%s"' % args.db)
     else:
         logger.info('Using db: "%s"' % args.db)
@@ -138,7 +136,7 @@ if __name__ == "__main__":
         r=r,
         mongoclient=pymongo.MongoClient(),
         db_name=args.db,
-        collection_name='posts',
+        collection_name=config.POSTS_COLLECTION,
         subreddit=args.subreddit
     )
 
