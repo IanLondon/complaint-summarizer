@@ -20,6 +20,9 @@ class PostManager(object):
         self.posts_collection = self.mongoclient[self.db][config.POSTS_COLLECTION]
         self.clean_posts_collection = self.mongoclient[self.db][config.CLEANED_POSTS_COLLECTION]
 
+    def __repr__(self):
+        return 'Postmanager(mongoclient={self.mongoclient}, subreddit="{self.subreddit}", db="{self.db}")'.format(self=self)
+
     def fetch_posts(self, how, min_comments=1):
         """Yields each post scraped from the given subreddit"""
         posts = self.posts_collection.find({
@@ -106,7 +109,7 @@ class Preprocessor(object):
     """
     def __init__(self, corpus, min_doc_wordcount=0, max_doc_wordcount=float('inf'),
         min_word_len=float('-inf'), max_word_len=float('inf'), stopwords=nltk.corpus.stopwords.words('english'),
-        forbidden_pos_tags=[], stem_or_lemma_callback=None):
+        forbidden_pos_tags=[], stem_or_lemma_callback=None, filter_pattern=r'[^a-zA-Z\- ]'):
 
         self.corpus = list(corpus)
         self.min_doc_wordcount = min_doc_wordcount
@@ -116,8 +119,12 @@ class Preprocessor(object):
         self.stopwords = stopwords
         self.forbidden_pos_tags = forbidden_pos_tags
         self.stem_or_lemma_callback = stem_or_lemma_callback
-        # pattern to remove all non-alpha characters except for hyphen and space
-        self.filter_pattern = re.compile(r'[^a-zA-Z\- ]')
+        # pattern to replace characters in each word
+        # default: remove all non-alpha characters except for hyphen and space
+        self.filter_pattern = re.compile(filter_pattern)
+
+    def __repr__(self):
+        return 'Preprocessor(corpus, min_doc_wordcount={self.min_doc_wordcount}, max_doc_wordcount={self.max_doc_wordcount}, min_word_len={self.min_word_len}, max_word_len={self.max_word_len}, stopwords={self.stopwords}, forbidden_pos_tags={self.forbidden_pos_tags}, stem_or_lemma_callback={self.stem_or_lemma_callback}), filter_pattern=r"{self.filter_pattern}"'.format(self=self)
 
     def valid_word(self, word, pos_tag):
         """Evaluates all the conditions that determine whether to keep or discard a word"""
