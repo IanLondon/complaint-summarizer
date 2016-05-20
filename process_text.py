@@ -23,7 +23,7 @@ class PostManager(object):
     def __repr__(self):
         return 'Postmanager(mongoclient={self.mongoclient}, subreddit="{self.subreddit}", db="{self.db}")'.format(self=self)
 
-    def fetch_posts(self, how, min_comments=1):
+    def fetch_raw_posts(self, how, min_comments=1):
         """Yields each post scraped from the given subreddit"""
         posts = self.posts_collection.find({
             'subreddit':self.subreddit,
@@ -38,7 +38,7 @@ class PostManager(object):
             raise ValueError('Unsupported "how" arg: "%s"' % how)
 
     def _comments_as_docs(self, posts):
-        """Returns each individual comment in a post (called by fetch_posts)"""
+        """Returns each individual comment in a post (called by fetch_raw_posts)"""
         for post in posts:
             # first yield the post text body, if any
             if post['text']:
@@ -48,7 +48,7 @@ class PostManager(object):
                 yield comment['text']
 
     def _posts_as_docs(self, posts):
-        """Concatenates all a posts's comments together and yields the result (called by fetch_posts)"""
+        """Concatenates all a posts's comments together and yields the result (called by fetch_raw_posts)"""
         for post in posts:
             comments = [comment['text'] for comment in post['comments']]
             # preprend post text body if it exists
@@ -82,6 +82,8 @@ class PostManager(object):
         ])
         return None
 
+    def fetch_clean_posts(self):
+        return [post['body'] for post in self.clean_posts_collection.find({'subreddit':self.subreddit})]
 
 class Preprocessor(object):
     """
@@ -202,7 +204,7 @@ if __name__ == "__main__":
 
     postman = PostManager(mongoclient, args.subreddit, args.db)
 
-    corpus = postman.fetch_posts(how='comments_as_docs', min_comments=10)
+    corpus = postman.fetch_raw_posts(how='comments_as_docs', min_comments=10)
 
     prepro = Preprocessor(corpus).process()
     clean_corpus = prepro.corpus
