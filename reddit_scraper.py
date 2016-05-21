@@ -99,10 +99,13 @@ class MongoRedditStreamer(object):
                 try:
                     post_doc = self.convert_to_document(post)
                     # upsert if _id (post.id) already exists
-                    self.collection.update_one(
+                    updated = self.collection.update_one(
                         {'_id':post_doc['_id']},
                         {'$set':post_doc}, upsert=True)
-                    logger.info('Saved "%s"' % post.title[:20])
+                    if updated.modified_count>0:
+                        logger.info('Updated %i existing post(s) "%s"' % (updated.modified_count, post.title[:25]))
+                    else:
+                        logger.info('Added new post "%s"' % post.title[:25])
                 except requests.exceptions.HTTPError:
                     logger.warning('HTTPError for "%s"' % post.url)
                 except AttributeError as err:
