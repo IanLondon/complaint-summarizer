@@ -98,16 +98,30 @@ class MongoRedditStreamer(object):
             for post in new_posts:
                 try:
                     post_doc = self.convert_to_document(post)
-                    # upsert if _id (post.id) already exists
+                    # upsert: update if _id (post.id) already exists. otherwise, insert.
                     updated = self.collection.update_one(
                         {'_id':post_doc['_id']},
-                        {'$set':post_doc}, upsert=True)
-                    if updated.modified_count>0:
-                        logger.info('Updated %i existing post(s) "%s"' % (updated.modified_count, post.title[:25]))
-                    else:
-                        logger.info('Added new post "%s"' % post.title[:25])
+                        {'$set':post_doc},
+                        upsert=True)
+
+                    # logger.debug('id:%r ack: %s matched:%s modified:%s' % (post_doc['_id'], updated.acknowledged, updated.matched_count, updated.modified_count))
+
+                    try:
+                        post_info_str = 'title:"%s", _id:"%s", date:"%s", subreddit:"%s"' % (post.title[:30], post_doc['_id'], post_doc['date'], post_doc['subreddit'])
+                    except KeyError as err:
+                        post_info_str = post_doc['_id']
+                        logger.warn('Error: %s -- Post _id:"%s" missing keys that I wanted to log.'% (err, post_info_str))
+
+                    if not updated.acknowledged:
+                        logger.warn('Failed to add post %s\nraw_result:"%s"' % (post_info_str, str(updated.raw_result)))
+                    if updated.matched_count == 1:
+                        logger.info('Updated existing post(s) %s' % post_info_str)
+                    if updated.matched_count == 0:
+                        logger.info('Added new post %s' % post_info_str)
+
                 except requests.exceptions.HTTPError:
                     logger.warning('HTTPError for "%s"' % post.url)
+
                 except AttributeError as err:
                     logger.warning(err)
         except KeyboardInterrupt:
