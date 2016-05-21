@@ -115,9 +115,11 @@ class MongoRedditStreamer(object):
                     if not updated.acknowledged:
                         logger.warn('Failed to add post %s\nraw_result:"%s"' % (post_info_str, str(updated.raw_result)))
                     if updated.matched_count == 1:
-                        logger.info('Updated existing post(s) %s' % post_info_str)
-                    if updated.matched_count == 0:
+                        logger.info('Updated existing post %s' % post_info_str)
+                    elif updated.matched_count == 0:
                         logger.info('Added new post %s' % post_info_str)
+                    else:
+                        logger.critical('wtf? multiple indexes??')
 
                 except requests.exceptions.HTTPError:
                     logger.warning('HTTPError for "%s"' % post.url)
