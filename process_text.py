@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-# Load reddit comments from MongoDB, preprocess,
-# train Latent Dirichlet Allocation, and evaluate the model.
+# Load reddit comments from MongoDB, preprocess, and put into new collection
+# of cleaned, tokenized documents.
 from gensim.models.ldamulticore import LdaMulticore
 import pymongo
 import nltk
@@ -83,7 +83,13 @@ class PostManager(object):
         return None
 
     def fetch_clean_posts(self):
-        return [post['body'] for post in self.clean_posts_collection.find({'subreddit':self.subreddit})]
+        query = {'subreddit':self.subreddit}
+        clean_post_count = self.clean_posts_collection.find(query).count()
+        if clean_post_count == 0:
+            raise IOError('No cleaned documents found, did you run process_text.py for subreddit "%s"?' % self.subreddit)
+        print 'Found %i cleaned documents for subreddit "%s"' % (clean_post_count, self.subreddit)
+        clean_corpus = (post['body'] for post in self.clean_posts_collection.find(query))
+        return clean_corpus
 
 class Preprocessor(object):
     """
@@ -193,20 +199,22 @@ class Preprocessor(object):
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser(description='Scrapes then streams posts from given subreddit to MongoDB')
-    arg_parser.add_argument('--subreddit', type=str, help='subreddit name (or "all" to get all posts')
+    arg_parser.add_argument('--subreddit', type=str, help='subreddit name (or "all" to get all posts', required=True)
     arg_parser.add_argument('--db', type=str, help='name of MongoDB database to persist posts to')
     args = arg_parser.parse_args()
-
-    if not args.subreddit:
-        raise ValueError('subreddit is required.')
 
     mongoclient = pymongo.MongoClient()
 
     postman = PostManager(mongoclient, args.subreddit, args.db)
 
+    # default: individual comments as docs
     corpus = postman.fetch_raw_posts(how='comments_as_docs', min_comments=10)
 
-    prepro = Preprocessor(corpus).process()
+    stopwords = nltk.corpus.stopwords.words('english') + ['nt']
+
+    prepro = Preprocessor(corpus, min_doc_wordcount=20,
+        min_word_len=3, max_word_len=20, stopwords=stopwords,
+        forbidden_pos_tags=[], stem_or_lemma_callback=None, filter_pattern=r'[^a-zA-Z\- ]').process()
     clean_corpus = prepro.corpus
 
     postman.persist_cleaned_corpus(clean_corpus, drop_existing=True)
