@@ -3,9 +3,10 @@
 # and store in MongoDB.
 import requests
 import logging
-import datetime
 import sys
 import argparse
+import time
+from datetime import datetime
 
 import praw
 from praw.handlers import MultiprocessHandler
@@ -56,10 +57,30 @@ class MongoRedditStreamer(object):
         self.collection = self.db[collection_name]
         if get_historic:
             # get all posts from beginning of the subreddit to now
-            self.post_generator = praw.helpers.submissions_between(self.r, self.subreddit)
+            # start from the last post scraped in same subreddit in the database
+            # submissions_between scrapes backwards in time, newer to older
+            # That means if you get a single old post, we'll skip to there
+            # There's a built-in 2-hour-backward offset
+
+            # TODO: This doesn't work! It just scrapes from most recent!
+            # XXX: is submissions_between broken? Try it on its own.
+            # oldest_posts = self.collection.find({'subreddit':self.subreddit}).sort('date', pymongo.ASCENDING)
+            # try:
+            #     oldest_post_date = oldest_posts.next()['date']
+            #     oldest_timestamp = time.mktime(oldest_post_date.timetuple())
+            #     print 'oldest_timestamp', oldest_timestamp
+            #     logger.info('Starting historic scrape from date: %s for subreddit "%s".' % (oldest_post_date, self.subreddit))
+            # except StopIteration:
+            #     logger.info('No existing posts in subreddit "%s", starting historic scrape from beginning of subreddit.' % self.subreddit)
+            #     oldest_timestamp = None
+            #
+            # self.post_generator = praw.helpers.submissions_between(self.r, self.subreddit, highest_timestamp=oldest_timestamp, newest_first=True, verbosity=2)
+
+            self.post_generator = praw.helpers.submissions_between(self.r, self.subreddit, highest_timestamp=None, newest_first=True)
         else:
             # get past ~1000 posts and stream in new ones
             self.post_generator = praw.helpers.submission_stream(self.r, self.subreddit)
+
     def convert_to_document(self, post):
         # get comments if there are any
         comments = {}
@@ -73,7 +94,7 @@ class MongoRedditStreamer(object):
                     #     'id': comment.author.id,
                     #     'name': comment.author.name
                     # },
-                    'created': datetime.datetime.fromtimestamp(comment.created)
+                    'created': datetime.fromtimestamp(comment.created)
                 }
                 for comment in comment_list
             ]}
@@ -85,13 +106,14 @@ class MongoRedditStreamer(object):
             #     'id': post.author.id,
             #     'name': post.author.name
             # },
-            'subreddit': post.subreddit.display_name,
+            'subreddit': post.subreddit.display_name.lower(), #lowercase the subreddit names
             'text': post.selftext,
-            'date': datetime.datetime.fromtimestamp(post.created),
+            'date': datetime.fromtimestamp(post.created),
             'num_comments': 0 if not comments else len(comments['comments'])
         }
         post_doc.update(comments)
         return post_doc
+
     def scrape_to_db(self):
         try:
             new_posts = self.post_generator
@@ -126,6 +148,7 @@ class MongoRedditStreamer(object):
 
                 except AttributeError as err:
                     logger.warning(err)
+            logger.info('***FINISHED SCRAPING: No more posts found***')
         except KeyboardInterrupt:
             sys.exit(0)
 
