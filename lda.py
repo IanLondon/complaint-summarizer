@@ -57,7 +57,8 @@ if __name__ == '__main__':
     postman = PostManager(mongoclient, args.subreddit)
 
     # corpus is a generator, of lists of word-tokens, for each document
-    processed = list(postman.fetch_clean_posts())
+    processed = list(postman.fetch_doc_tokens(document_level='postwise'))
+    print 'got %i processed documents' % len(processed)
 
     lda_processor = LdaProcessor(processed)
 
