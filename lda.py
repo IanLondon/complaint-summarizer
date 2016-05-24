@@ -1,10 +1,12 @@
 import argparse
-import pymongo
-import config
+
 from gensim.models.ldamulticore import LdaMulticore
 from gensim.models.ldamodel import LdaModel
 from gensim.models.tfidfmodel import TfidfModel
 from gensim import corpora
+
+import config
+from mongo_setup import mongoclient
 from process_text import PostManager
 
 class LdaProcessor(object):
@@ -38,7 +40,7 @@ class LdaProcessor(object):
         return self
 
     def word_topics(self, num_words=10):
-        return [topic[1] for topic in self.lda.print_topics(num_words=num_words)]
+        return [topic[1] for topic in self.lda.print_topics(num_topics=self.lda.num_topics, num_words=num_words)]
 
 
 if __name__ == '__main__':
@@ -48,7 +50,6 @@ if __name__ == '__main__':
     arg_parser.add_argument('--tfidf_thresh', type=float, help='threshold for filtering out words with lower tf-idf values')
     args = arg_parser.parse_args()
 
-    mongoclient = pymongo.MongoClient()
     postman = PostManager(mongoclient, args.subreddit)
 
     # corpus is a generator, of lists of word-tokens, for each document

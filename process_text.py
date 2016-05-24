@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 # Load reddit comments from MongoDB, preprocess, and put into new collection
 # of cleaned, tokenized documents.
-from gensim.models.ldamulticore import LdaMulticore
-import pymongo
-import nltk
-from nltk.stem.porter import PorterStemmer
-from nltk.stem.lancaster import LancasterStemmer
 import re
 import string
 import argparse
+
 import config
+from mongo_setup import mongoclient
+
+import nltk
+from nltk.stem.porter import PorterStemmer
+from nltk.stem.lancaster import LancasterStemmer
+
+from gensim.models.ldamulticore import LdaMulticore
 
 class PostManager(object):
     """Convenience class for fetching scraped posts for a given subreddit."""
@@ -24,11 +27,18 @@ class PostManager(object):
         return 'Postmanager(mongoclient={self.mongoclient}, subreddit="{self.subreddit}", db="{self.db}")'.format(self=self)
 
     def fetch_raw_posts(self, how, min_comments=1):
-        """Yields each post scraped from the given subreddit"""
+        """
+        Yields each post scraped from the given subreddit.
+
+        how :
+            'comments_as_docs' or 'posts_as_docs'
+        """
         posts = self.posts_collection.find({
             'subreddit':self.subreddit,
             'num_comments':{'$gt':min_comments}
         })
+
+        print 'Getting %s' % how
 
         if how == 'comments_as_docs':
             return self._comments_as_docs(posts)
@@ -36,6 +46,7 @@ class PostManager(object):
             return self._posts_as_docs(posts)
         else:
             raise ValueError('Unsupported "how" arg: "%s"' % how)
+
 
     def _comments_as_docs(self, posts):
         """Returns each individual comment in a post (called by fetch_raw_posts)"""
@@ -203,16 +214,14 @@ if __name__ == "__main__":
     arg_parser.add_argument('--db', type=str, help='name of MongoDB database to persist posts to')
     args = arg_parser.parse_args()
 
-    mongoclient = pymongo.MongoClient()
-
     postman = PostManager(mongoclient, args.subreddit, args.db)
 
     # default: individual comments as docs
-    corpus = postman.fetch_raw_posts(how='comments_as_docs', min_comments=10)
+    corpus = postman.fetch_raw_posts(how='posts_as_docs', min_comments=4)
 
     stopwords = nltk.corpus.stopwords.words('english') + ['nt']
 
-    prepro = Preprocessor(corpus, min_doc_wordcount=20,
+    prepro = Preprocessor(corpus, min_doc_wordcount=40,
         min_word_len=3, max_word_len=20, stopwords=stopwords,
         forbidden_pos_tags=[], stem_or_lemma_callback=None, filter_pattern=r'[^a-zA-Z\- ]').process()
     clean_corpus = prepro.corpus

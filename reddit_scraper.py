@@ -10,10 +10,10 @@ from datetime import datetime
 
 import praw
 from praw.handlers import MultiprocessHandler
-import pymongo
 
-import secrets
 import config
+from mongo_setup import mongoclient
+import secrets
 # document conversion adapted from
 # https://gist.github.com/ludar/fe29455bcd121bb79cf9
 
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
     streamer = MongoRedditStreamer(
         r=r,
-        mongoclient=pymongo.MongoClient(),
+        mongoclient=mongoclient,
         db_name=args.db,
         collection_name=config.POSTS_COLLECTION,
         subreddit=args.subreddit,
