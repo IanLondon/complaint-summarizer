@@ -5,6 +5,7 @@ import nltk
 requirements = [
     'stopwords',
     'averaged_perceptron_tagger',
+    'punkt',
 ]
 
 for data_name in requirements:
