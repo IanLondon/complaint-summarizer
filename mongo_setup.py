@@ -2,12 +2,14 @@ import pymongo
 import config
 import secrets
 # This MongoClient is re-used by other scripts
-if secrets.MONGO_URI:
-    print 'connected to secret remote mongo'
+try:
+    # if there's a MONGO_URI in secrets.py, use that URL
     mongoclient = pymongo.MongoClient(secrets.MONGO_URI)
-else:
-    print 'connected to local MongoDB'
+    print 'connected to secret remote mongo'
+except AttributeError:
+    # otherwise use localhost default
     mongoclient = pymongo.MongoClient()
+    print 'connected to local MongoDB'
 
 # convenience function for debugging
 def subreddit_counts():
