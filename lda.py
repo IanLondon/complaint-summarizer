@@ -22,11 +22,29 @@ class LdaProcessor(object):
         self.corpus = [self.id2word.doc2bow(doc) for doc in documents]
         return self
 
-    def tfidf_filter(self, low_thresh):
+    def tfidf_filter(self, low_thresh, whitelist=[], whitelist_thresh=float('-inf')):
+        """
+        Remove words which are below the specified threshold,
+        unless they're in the whitelist
+
+        low_thresh : numeric
+
+        whitelist :
+            a bag of words document of the form [(word_id, freq), ...]
+
+        whitelist_thresh : numeric
+        """
         tfidf = TfidfModel(self.corpus, id2word=self.id2word)
+
+        if whitelist:
+            print 'whitelist', whitelist
+            print 'whitelist threshold for tfidf:', whitelist_thresh
+        whitelist_ids = [word_id for word_id, freq in whitelist]
+
         low_value_words = []
         for bow in self.corpus:
-            low_value_words += [id for id, value in tfidf[bow] if value < low_thresh]
+            low_value_words += [word_id for word_id, value in tfidf[bow] if value < low_thresh
+                and not (word_id in whitelist_ids and value > whitelist_thresh)]
 
         self._tfidf = tfidf #save to TfidfModel to the object
 
@@ -50,6 +68,7 @@ if __name__ == '__main__':
     arg_parser.add_argument('--subreddit', type=str, help='subreddit name (or "all" to get all posts', required=True)
     arg_parser.add_argument('--num_topics', type=int, help='number of topics for LDA', required=True)
     arg_parser.add_argument('--tfidf_thresh', type=float, help='threshold for filtering out words with lower tf-idf values')
+    arg_parser.add_argument('--whitelist_thresh', type=float, help='tf-idf threshold for "whitelisted" words ')
     arg_parser.add_argument('--eta', type=float, help='eta hyperparameter for LDA. Low eta means topics contain more dissimilar words.')
     arg_parser.add_argument('--alpha', type=float, help='alpha hyperparameter for LDA. Low alpha means documents contain more dissimilar topics.')
     args = arg_parser.parse_args()
@@ -57,17 +76,43 @@ if __name__ == '__main__':
     postman = PostManager(mongoclient, args.subreddit)
 
     # corpus is a generator, of lists of word-tokens, for each document
+    print 'getting documents from mongo'
     processed = list(postman.fetch_doc_tokens(document_level='postwise'))
     print 'got %i processed documents' % len(processed)
 
     lda_processor = LdaProcessor(processed)
 
+    complaint_words = ['shit','fuck','annoying','bullshit','junk',
+    'asshole','fucker','frustrating','problem','complain','motherfucker','bitch',
+    'nuisance','headache','difficult','bull','stupid','aggravating','help',
+    'impossible','sucks','disappointing','faulty','tired']
+    complaint_whitelist = lda_processor.id2word.doc2bow(complaint_words)
+
     if args.tfidf_thresh:
         print 'thresholding with tfidf threshold of %f' % args.tfidf_thresh
-        lda_processor.tfidf_filter(args.tfidf_thresh)
+        lda_processor.tfidf_filter(args.tfidf_thresh,
+            whitelist=complaint_whitelist,
+            whitelist_thresh=args.whitelist_thresh)
 
     lda_kwargs = {lda_arg:vars(args)[lda_arg] for lda_arg in ['eta','alpha']}
 
     lda_processor.train_lda(args.num_topics, **lda_kwargs)
 
+    # make new complaint bow with re-trained id2word Dictionary
+    complaint_bow = lda_processor.id2word.doc2bow(complaint_words)
+
+    print 'the top words in each topic'
     print '\n------\n'.join(lda_processor.word_topics())
+
+    print '\n\n=====================\n=====================\n'
+
+    print 'complaint_bow', complaint_bow
+    print '\nleftover words (high tdfif removes some of these):', [lda_processor.id2word[word_id] for word_id, freq in complaint_bow]
+    complaint_topics = lda_processor.lda.get_document_topics(complaint_bow)
+    # print '\ncomplaint topics:', complaint_topics
+    print '\ntop 10 words in %i complaint topics out of %i topics' % (len(complaint_topics), args.num_topics)
+    print '-'*12
+    for topicid, topic_prob in sorted(complaint_topics, key=lambda x: x[1], reverse=True):
+        print 'Topic {0} : prob {1} )'.format(topicid, topic_prob)
+        print lda_processor.lda.print_topic(topicid, topn=10)
+        print '----------'
