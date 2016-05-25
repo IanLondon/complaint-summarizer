@@ -38,19 +38,53 @@ class PostManager(object):
     def __repr__(self):
         return 'Postmanager(mongoclient={self.mongoclient}, subreddit="{self.subreddit}", read_db="{self.read_db}", write_db="{self.write_db}")'.format(self=self)
 
-    def fetch_doc_tokens(self, document_level):
-        """Generator which yields tokens for the docs which have been processed by """
+    def fetch_doc_tokens(self, document_level, find_query_mixin={}):
+        """
+        Generator which yields tokens for the docs which have been processed and tokenized
+
+        required_tokens :
+            An optional list of strings
+        """
         if document_level != 'postwise':
             raise NotImplementedError('document_level:%s' % document_level)
 
-        for doc in self.posts_read.find({'subreddit':self.subreddit, document_level:{'$exists':True}}):
+        query = {'subreddit':self.subreddit, document_level:{'$exists':True}}
+        query.update(find_query_mixin)
+
+        for doc in self.posts_read.find(query):
             try:
                 yield doc[document_level]['tokens']
             except KeyError:
                 # XXX: this shouldn't happen...
                 print 'woop, doc missing %s.tokens' % document_level
 
-    
+    def save_doc_topics(self, lda_processor, find_query_mixin={}):
+        """
+        Uses the trained LDA model in the LdaProcessor to classify all documents in the subreddit,
+        or all documents returned by the find_query_mixin query dict
+        """
+        # XXX: assumes postwise document_level
+
+        # add/modify user-specified key:vals to the find_query
+        find_query = {'subreddit': self.subreddit, 'postwise.tokens':{'$exists':True}}
+        find_query.update(find_query_mixin)
+
+        doc_count = 0
+        for doc in self.posts_read.find(find_query):
+            tokens = doc['postwise']['tokens']
+            doc_bow = lda_processor.id2word.doc2bow(tokens)
+            topic_distro = lda_processor.lda.get_document_topics(doc_bow)
+            self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_distro}}, upsert=True)
+            doc_count += 1
+        print 'Saved topic distros for %i documents' % doc_count
+
+    def wipe_all_topics(self):
+        """Remove the postwise.topic_distro values from all documents in the subreddit"""
+        doc_count = 0
+        for doc in self.posts_read.find({'subreddit':self.subreddit, 'postwise.topic_distro':{'$exists':True}}):
+            self.posts_write.update({'_id':doc['_id']},{'$unset':{'postwise.topic_distro':''}})
+            doc_count += 1
+        print 'wiped topics from %i documents' % doc_count
 
     # def fetch_raw_posts(self, how, min_comments=1):
     #     """

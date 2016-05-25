@@ -22,7 +22,7 @@ class LdaProcessor(object):
         self.corpus = [self.id2word.doc2bow(doc) for doc in documents]
         return self
 
-    def tfidf_filter(self, low_thresh, whitelist=[], whitelist_thresh=float('-inf')):
+    def tfidf_filter(self, low_thresh, whitelist=[], whitelist_thresh=0):
         """
         Remove words which are below the specified threshold,
         unless they're in the whitelist
@@ -73,26 +73,33 @@ if __name__ == '__main__':
     arg_parser.add_argument('--alpha', type=float, help='alpha hyperparameter for LDA. Low alpha means documents contain more dissimilar topics.')
     args = arg_parser.parse_args()
 
+    complaint_words = ['shit','fuck','annoying','bullshit','junk',
+    'asshole','fucker','frustrating','problem','complain','motherfucker','bitch',
+    'nuisance','headache','difficult','bull','stupid','aggravating','help',
+    'impossible','sucks','disappointing','faulty','tired','goddamn','damn','crap',
+    'exhausted', 'exhausting','struggling','painful']
+
+    complaint_words_query_mixin = {'postwise.tokens': {'$in': complaint_words}}
+
     postman = PostManager(mongoclient, args.subreddit)
 
     # corpus is a generator, of lists of word-tokens, for each document
     print 'getting documents from mongo'
-    processed = list(postman.fetch_doc_tokens(document_level='postwise'))
+    processed = list(postman.fetch_doc_tokens(document_level='postwise', find_query_mixin=complaint_words_query_mixin))
     print 'got %i processed documents' % len(processed)
 
     lda_processor = LdaProcessor(processed)
 
-    complaint_words = ['shit','fuck','annoying','bullshit','junk',
-    'asshole','fucker','frustrating','problem','complain','motherfucker','bitch',
-    'nuisance','headache','difficult','bull','stupid','aggravating','help',
-    'impossible','sucks','disappointing','faulty','tired']
     complaint_whitelist = lda_processor.id2word.doc2bow(complaint_words)
 
     if args.tfidf_thresh:
         print 'thresholding with tfidf threshold of %f' % args.tfidf_thresh
-        lda_processor.tfidf_filter(args.tfidf_thresh,
-            whitelist=complaint_whitelist,
-            whitelist_thresh=args.whitelist_thresh)
+        print 'NOT WHITELISTING, since we already pulled with complaint words'
+        print 'pulled only docs with tokens: ' + ' '.join(complaint_words)
+        lda_processor.tfidf_filter(args.tfidf_thresh)
+        # lda_processor.tfidf_filter(args.tfidf_thresh,
+        #     whitelist=complaint_whitelist,
+        #     whitelist_thresh=args.whitelist_thresh)
 
     lda_kwargs = {lda_arg:vars(args)[lda_arg] for lda_arg in ['eta','alpha']}
 
@@ -106,13 +113,28 @@ if __name__ == '__main__':
 
     print '\n\n=====================\n=====================\n'
 
-    print 'complaint_bow', complaint_bow
-    print '\nleftover words (high tdfif removes some of these):', [lda_processor.id2word[word_id] for word_id, freq in complaint_bow]
-    complaint_topics = lda_processor.lda.get_document_topics(complaint_bow)
-    # print '\ncomplaint topics:', complaint_topics
-    print '\ntop 10 words in %i complaint topics out of %i topics' % (len(complaint_topics), args.num_topics)
-    print '-'*12
-    for topicid, topic_prob in sorted(complaint_topics, key=lambda x: x[1], reverse=True):
-        print 'Topic {0} : prob {1} )'.format(topicid, topic_prob)
-        print lda_processor.lda.print_topic(topicid, topn=10)
-        print '----------'
+    # print 'complaint_bow', complaint_bow
+    # print '\nleftover words (high tdfif removes some of these):', [lda_processor.id2word[word_id] for word_id, freq in complaint_bow]
+    # complaint_topics = lda_processor.lda.get_document_topics(complaint_bow)
+    # # print '\ncomplaint topics:', complaint_topics
+    # print '\ntop 10 words in %i complaint topics out of %i topics' % (len(complaint_topics), args.num_topics)
+    # print '-'*12
+    # for topicid, topic_prob in sorted(complaint_topics, key=lambda x: x[1], reverse=True):
+    #     print 'Topic {0} : prob {1} )'.format(topicid, topic_prob)
+    #     print lda_processor.lda.print_topic(topicid, topn=10)
+    #     print '----------'
+
+    # def merge_dicts(all_dicts):
+    #     """
+    #     Hacky way to merge a list of dicts together.
+    #     If keys collide, last key wins.
+    #     """
+    #     final = {}
+    #     for d in all_dicts:
+    #         final.update(d)
+    #     return final
+
+    postman.wipe_all_topics()
+
+    # save the topics for all the docs that we selected before
+    postman.save_doc_topics(lda_processor, find_query_mixin=complaint_words_query_mixin)
