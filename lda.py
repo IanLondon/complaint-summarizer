@@ -1,8 +1,8 @@
 import argparse
 
 from gensim.models.ldamulticore import LdaMulticore
-from gensim.models.ldamodel import LdaModel
-from gensim.models.tfidfmodel import TfidfModel
+# from gensim.models.ldamodel import LdaModel
+# from gensim.models.tfidfmodel import TfidfModel
 from gensim import corpora
 
 import config
@@ -10,74 +10,50 @@ from mongo_setup import mongoclient
 from process_text import PostManager
 
 class LdaProcessor(object):
-    def __init__(self, processed_text):
-        self.processed_text = processed_text
-        self.id2word = corpora.Dictionary(processed_text)
-        self.regen_corpus(processed_text)
+    def __init__(self, token_docs, **filter_extremes_args):
+        """
+        token_docs : a list of lists of word or n-gram or sentence tokens.
+            Eg, [['the','crazy','cat'],['that','doggone','dog']]
+        """
+        self.token_docs = token_docs
+        self.id2word = corpora.Dictionary(token_docs)
+        if filter_extremes_args:
+            print 'filtering words with extreme frequencies'
+            self.id2word.filter_extremes(**filter_extremes_args)
+        # initialize the bow_corpus
+        self.reset_bow_corpus(token_docs)
 
-        print 'Initially got %i words' % len(self.id2word)
+        print 'Got %i total tokens (words)' % len(self.id2word)
 
-    def regen_corpus(self, documents):
+    def reset_bow_corpus(self, documents):
         """set or reset the corpus with the given documents"""
-        self.corpus = [self.id2word.doc2bow(doc) for doc in documents]
-        return self
-
-    def tfidf_filter(self, low_thresh, whitelist=[], whitelist_thresh=0):
-        """
-        Remove words which are below the specified threshold,
-        unless they're in the whitelist
-
-        low_thresh : numeric
-
-        whitelist :
-            a bag of words document of the form [(word_id, freq), ...]
-
-        whitelist_thresh : numeric
-        """
-        tfidf = TfidfModel(self.corpus, id2word=self.id2word)
-
-        if whitelist:
-            print 'whitelist', whitelist
-            print 'whitelist threshold for tfidf:', whitelist_thresh
-        whitelist_ids = [word_id for word_id, freq in whitelist]
-
-        low_value_words = []
-        for bow in self.corpus:
-            low_value_words += [word_id for word_id, value in tfidf[bow] if value < low_thresh
-                and not (word_id in whitelist_ids and value > whitelist_thresh)]
-
-        self._tfidf = tfidf #save to TfidfModel to the object
-
-        self.id2word.filter_tokens(bad_ids=low_value_words)
-        print '%i words left after tf-idf filtering' % len(self.id2word)
-        # regenerate corpus with new id2word
-        self.regen_corpus(self.processed_text)
-
-        return self
+        self.bow_corpus = [self.id2word.doc2bow(doc) for doc in documents]
+        return None
 
     def train_lda(self, num_topics, **kwargs):
-        self.lda = LdaMulticore(self.corpus, id2word=self.id2word, num_topics=num_topics, **kwargs)
+        print 'training LDA...'
+        self.lda = LdaMulticore(self.bow_corpus, id2word=self.id2word, num_topics=num_topics, **kwargs)
         return self
 
     def word_topics(self, num_words=10):
         return [topic[1] for topic in self.lda.print_topics(num_topics=self.lda.num_topics, num_words=num_words)]
 
+    # utility functions
+    def significant_topic_terms(self, topicid):
+        raise NotImplementedError()
 
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser(description='Trains LDA for documents in subreddit')
     arg_parser.add_argument('--subreddit', type=str, help='subreddit name (or "all" to get all posts', required=True)
     arg_parser.add_argument('--num_topics', type=int, help='number of topics for LDA', required=True)
-    arg_parser.add_argument('--tfidf_thresh', type=float, help='threshold for filtering out words with lower tf-idf values')
-    arg_parser.add_argument('--whitelist_thresh', type=float, help='tf-idf threshold for "whitelisted" words ')
     arg_parser.add_argument('--eta', type=float, help='eta hyperparameter for LDA. Low eta means topics contain more dissimilar words.')
     arg_parser.add_argument('--alpha', type=float, help='alpha hyperparameter for LDA. Low alpha means documents contain more dissimilar topics.')
+    arg_parser.add_argument('--min_percent', type=float, help='Min percentage of docs that token must appear in to be included', default=0.0)
+    arg_parser.add_argument('--max_percent', type=float, help='Max percentage of docs that token must appear in to be included', default=1.0)
+
     args = arg_parser.parse_args()
 
-    complaint_words = ['shit','fuck','annoying','bullshit','junk',
-    'asshole','fucker','frustrating','problem','complain','motherfucker','bitch',
-    'nuisance','headache','difficult','bull','stupid','aggravating','help',
-    'impossible','sucks','disappointing','faulty','tired','goddamn','damn','crap',
-    'exhausted', 'exhausting','struggling','painful']
+    complaint_words = config.COMPLAINT_WORDS
 
     complaint_words_query_mixin = {'postwise.tokens': {'$in': complaint_words}}
 
@@ -85,21 +61,21 @@ if __name__ == '__main__':
 
     # corpus is a generator, of lists of word-tokens, for each document
     print 'getting documents from mongo'
-    processed = list(postman.fetch_doc_tokens(document_level='postwise', find_query_mixin=complaint_words_query_mixin))
-    print 'got %i processed documents' % len(processed)
+    token_docs = list(postman.fetch_doc_tokens(document_level='postwise', find_query_mixin=complaint_words_query_mixin))
+    print 'got %i token_docs documents' % len(token_docs)
 
-    lda_processor = LdaProcessor(processed)
+    # use filtering here!!
+    min_token_freq = args.min_percent * len(token_docs)
+    max_token_freq = args.max_percent * len(token_docs)
+    # XXX: watchout for this gensim pitfall:
+    # no_below takes an absolute number of docs, (min_token_freq)
+    # no_above takes a percentage (args.max_percent)
+    print 'token freqs\n  min: must appear in at least {0} of {2} docs\n  max: cannot appear in over {1} of {2} docs'.format(min_token_freq, max_token_freq, len(token_docs))
+
+
+    lda_processor = LdaProcessor(token_docs, no_below=min_token_freq, no_above=args.max_percent)
 
     complaint_whitelist = lda_processor.id2word.doc2bow(complaint_words)
-
-    if args.tfidf_thresh:
-        print 'thresholding with tfidf threshold of %f' % args.tfidf_thresh
-        print 'NOT WHITELISTING, since we already pulled with complaint words'
-        print 'pulled only docs with tokens: ' + ' '.join(complaint_words)
-        lda_processor.tfidf_filter(args.tfidf_thresh)
-        # lda_processor.tfidf_filter(args.tfidf_thresh,
-        #     whitelist=complaint_whitelist,
-        #     whitelist_thresh=args.whitelist_thresh)
 
     lda_kwargs = {lda_arg:vars(args)[lda_arg] for lda_arg in ['eta','alpha']}
 
@@ -108,31 +84,15 @@ if __name__ == '__main__':
     # make new complaint bow with re-trained id2word Dictionary
     complaint_bow = lda_processor.id2word.doc2bow(complaint_words)
 
-    print 'the top words in each topic'
-    print '\n------\n'.join(lda_processor.word_topics())
+    print '\nthe top words in each topic'
+    # print '\n------\n'.join(lda_processor.word_topics())
+
+    for topicid in range(args.num_topics):
+        print 'Topic {0} :'.format(topicid)
+        print lda_processor.lda.print_topic(topicid, topn=10)
+        print '----------'
 
     print '\n\n=====================\n=====================\n'
-
-    # print 'complaint_bow', complaint_bow
-    # print '\nleftover words (high tdfif removes some of these):', [lda_processor.id2word[word_id] for word_id, freq in complaint_bow]
-    # complaint_topics = lda_processor.lda.get_document_topics(complaint_bow)
-    # # print '\ncomplaint topics:', complaint_topics
-    # print '\ntop 10 words in %i complaint topics out of %i topics' % (len(complaint_topics), args.num_topics)
-    # print '-'*12
-    # for topicid, topic_prob in sorted(complaint_topics, key=lambda x: x[1], reverse=True):
-    #     print 'Topic {0} : prob {1} )'.format(topicid, topic_prob)
-    #     print lda_processor.lda.print_topic(topicid, topn=10)
-    #     print '----------'
-
-    # def merge_dicts(all_dicts):
-    #     """
-    #     Hacky way to merge a list of dicts together.
-    #     If keys collide, last key wins.
-    #     """
-    #     final = {}
-    #     for d in all_dicts:
-    #         final.update(d)
-    #     return final
 
     postman.wipe_all_topics()
 

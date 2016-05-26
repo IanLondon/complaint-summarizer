@@ -58,6 +58,19 @@ class PostManager(object):
                 # XXX: this shouldn't happen...
                 print 'woop, doc missing %s.tokens' % document_level
 
+    def fetch_doc_text_body(self, document_level, find_query_mixin={}):
+        """Yields (_id, text_body) for all docs with a concatenated text body field."""
+        find_query = {'subreddit': self.subreddit, 'postwise.text':{'$exists':True}}
+        find_query.update(find_query_mixin)
+
+        if document_level != 'postwise':
+            raise NotImplementedError('document_level:%s' % document_level)
+
+        print 'found %i matching the query for text body docs' % self.posts_read.find(find_query).count()
+
+        for doc in self.posts_read.find(find_query):
+            yield doc['_id'], doc[document_level]['text']
+
     def save_doc_topics(self, lda_processor, find_query_mixin={}):
         """
         Uses the trained LDA model in the LdaProcessor to classify all documents in the subreddit,
@@ -73,8 +86,9 @@ class PostManager(object):
         for doc in self.posts_read.find(find_query):
             tokens = doc['postwise']['tokens']
             doc_bow = lda_processor.id2word.doc2bow(tokens)
-            topic_distro = lda_processor.lda.get_document_topics(doc_bow)
-            self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_distro}}, upsert=True)
+            topic_distros = lda_processor.lda.get_document_topics(doc_bow, minimum_probability=0)
+            topic_dicts = [{'topic_id':topic_id, 'prob':prob} for topic_id, prob in topic_distros]
+            self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_dicts}}, upsert=True)
             doc_count += 1
         print 'Saved topic distros for %i documents' % doc_count
 
@@ -140,14 +154,6 @@ class PostManager(object):
     #             comments = [post_text + '\n'] + comments
     #         yield '\n'.join(comments)
 
-    # def fetch_clean_posts(self):
-    #     query = {'subreddit':self.subreddit}
-    #     clean_post_count = self.clean_posts_collection.find(query).count()
-    #     if clean_post_count == 0:
-    #         raise IOError('No cleaned documents found, did you run process_text.py for subreddit "%s"?' % self.subreddit)
-    #     print 'Found %i cleaned documents for subreddit "%s"' % (clean_post_count, self.subreddit)
-    #     clean_corpus = (post['body'] for post in self.clean_posts_collection.find(query))
-    #     return clean_corpus
 
 def each_comment_from_post(post):
     """
@@ -161,17 +167,21 @@ def each_comment_from_post(post):
     for comment in post['comments']:
         yield comment['text']
 
-def all_comments_from_post(post):
+def all_comments_from_post(post, prepend_title=True):
     """
     Concatenates all a posts's comments together and returns the result
     post : a single MongoDB document
     """
     if 'comments' in post:
         comments = [comment['text'] for comment in post['comments']]
-        # preprend post text body if it exists
         post_text = post['text']
+        title_text = post['title']
         if post_text:
+            # preprend post text body if it exists
             comments = [post_text + '\n'] + comments
+        if prepend_title and title_text:
+            # optionally prepend title
+            comments = [title_text] + comments
         return '\n'.join(comments).strip()
     else:
         return ''
@@ -272,7 +282,7 @@ class Preprocessor(object):
                     if cleaned_word:
                         processed_document.append(cleaned_word)
             # finally, update the post
-            post['postwise'] = {'tokens': processed_document}
+            post['postwise'] = {'tokens': processed_document, 'text': doc_text}
             self.postman.posts_write.update_one({'_id':post['_id']}, {'$set':post}, upsert=True)
         else:
             raise NotImplementedError('document_level: "%s"' % self.document_level)
@@ -319,10 +329,16 @@ class Preprocessor(object):
         # tokenize, then filter & otherwise process words in each document
         # using steps in preprocess_doc()
 
-        for post in self.postman.posts_read.find({'subreddit': self.postman.subreddit}):
+        all_posts_count = self.postman.posts_read.find({'subreddit': self.postman.subreddit}).count()
+
+        for post_idx, post in enumerate(self.postman.posts_read.find({'subreddit': self.postman.subreddit})):
             # preprocess the post and add the new words to the corpus
             new_words = self.preprocess_post(post)
             self.corpus.update(new_words)
+            
+            # print on every Nth post so you know it's alive
+            if post_idx % 100 == 0:
+                print 'done post %i out of %i' % (post_idx, all_posts_count)
 
         #TODO:
         print 'word count and other corpus-level filters not implemented, skipping...'
