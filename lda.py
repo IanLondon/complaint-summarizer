@@ -1,3 +1,5 @@
+# this is crappy, use nmf_topics.py instead.
+
 import argparse
 
 from gensim.models.ldamulticore import LdaMulticore
@@ -97,4 +99,4 @@ if __name__ == '__main__':
     postman.wipe_all_topics()
 
     # save the topics for all the docs that we selected before
-    postman.save_doc_topics(lda_processor, find_query_mixin=complaint_words_query_mixin)
+    postman.save_doc_topics_LdaProcessor(lda_processor, find_query_mixin=complaint_words_query_mixin)

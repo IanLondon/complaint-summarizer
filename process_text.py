@@ -71,7 +71,7 @@ class PostManager(object):
         for doc in self.posts_read.find(find_query):
             yield doc['_id'], doc[document_level]['text']
 
-    def save_doc_topics(self, lda_processor, find_query_mixin={}):
+    def save_doc_topics_LdaProcessor(self, lda_processor, find_query_mixin={}):
         """
         Uses the trained LDA model in the LdaProcessor to classify all documents in the subreddit,
         or all documents returned by the find_query_mixin query dict
@@ -92,6 +92,23 @@ class PostManager(object):
             doc_count += 1
         print 'Saved topic distros for %i documents' % doc_count
 
+    def save_doc_topics_Sklearn(self, nmf, vectorizer, find_query_mixin={}):
+        """
+        Uses the trained NMF (or maybe LatentDirichletAllocation) to classify docs
+        """
+        find_query = {'subreddit': self.subreddit, 'postwise.tokens':{'$exists':True}}
+        find_query.update(find_query_mixin)
+
+        doc_count = 0
+        for doc in self.posts_read.find(find_query):
+            text_body = doc['postwise']['text']
+
+            topic_distros = nmf.transform(vectorizer.transform([text_body]))[0]
+            topic_dicts = [{'topic_id':topic_id, 'prob':prob} for topic_id, prob in enumerate(topic_distros)]
+            self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_dicts}}, upsert=True)
+            doc_count += 1
+        print 'Saved topic distros for %i documents' % doc_count
+
     def wipe_all_topics(self):
         """Remove the postwise.topic_distro values from all documents in the subreddit"""
         doc_count = 0
@@ -99,6 +116,16 @@ class PostManager(object):
             self.posts_write.update({'_id':doc['_id']},{'$unset':{'postwise.topic_distro':''}})
             doc_count += 1
         print 'wiped topics from %i documents' % doc_count
+
+    def get_n_topics(self):
+        topic_distros = self.posts_read.find_one({'subreddit':self.subreddit,
+            'postwise.topic_distro':{'$exists':True},
+        })['postwise']['topic_distro']
+
+        max_topic_id = max(topic_dist['topic_id'] for topic_dist in topic_distros)
+        n_topics = max_topic_id + 1
+        print '%i topics found' % n_topics
+        return n_topics
 
     # def fetch_raw_posts(self, how, min_comments=1):
     #     """
@@ -335,7 +362,7 @@ class Preprocessor(object):
             # preprocess the post and add the new words to the corpus
             new_words = self.preprocess_post(post)
             self.corpus.update(new_words)
-            
+
             # print on every Nth post so you know it's alive
             if post_idx % 100 == 0:
                 print 'done post %i out of %i' % (post_idx, all_posts_count)
