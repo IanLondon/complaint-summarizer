@@ -26,8 +26,8 @@ if __name__ == '__main__':
 
     postman = PostManager(mongoclient, args.subreddit)
 
-    complaint_words = config.COMPLAINT_WORDS
-    query_mixin = {'postwise.tokens': {'$in': complaint_words}}
+    search_words = config.SEARCH_WORDS
+    query_mixin = {'postwise.tokens': {'$in': search_words}}
 
     print 'fetching docs...'
     doc_id_text_generator = postman.fetch_doc_text_body(document_level='postwise', find_query_mixin=query_mixin)

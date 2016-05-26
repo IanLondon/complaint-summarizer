@@ -25,15 +25,17 @@ if __name__ == '__main__':
 
     postman = PostManager(mongoclient, args.subreddit)
 
-    complaint_words = config.COMPLAINT_WORDS
+    search_words = config.SEARCH_WORDS
 
     doc_char_limit = 60000
+    print 'looking at topic-modeled posts in subreddit "%s"' % args.subreddit
+    print 'using topic prob threshold %f' % args.topic_thresh
     print 'per-topic character limit is roughly %i' % doc_char_limit
     print 'per-post character limit is %i' % args.single_doc_len
 
     for topic_id in range(postman.get_n_topics()):
         print '\nTopic #%i:\n=============' % topic_id
-        # query_mixin = {'postwise.tokens': {'$in': complaint_words}} #TODO: make query more general
+        # query_mixin = {'postwise.tokens': {'$in': search_words}} #TODO: make query more general
         query_mixin = {'postwise.topic_distro':{'$elemMatch':{'topic_id':topic_id, 'prob':{'$gt':args.topic_thresh}}}}
         doc_id_text_generator = postman.fetch_doc_text_body(document_level='postwise', find_query_mixin=query_mixin)
 

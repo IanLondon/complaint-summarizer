@@ -55,15 +55,15 @@ if __name__ == '__main__':
 
     args = arg_parser.parse_args()
 
-    complaint_words = config.COMPLAINT_WORDS
+    search_words = config.SEARCH_WORDS
 
-    complaint_words_query_mixin = {'postwise.tokens': {'$in': complaint_words}}
+    search_words_query_mixin = {'postwise.tokens': {'$in': search_words}}
 
     postman = PostManager(mongoclient, args.subreddit)
 
     # corpus is a generator, of lists of word-tokens, for each document
     print 'getting documents from mongo'
-    token_docs = list(postman.fetch_doc_tokens(document_level='postwise', find_query_mixin=complaint_words_query_mixin))
+    token_docs = list(postman.fetch_doc_tokens(document_level='postwise', find_query_mixin=search_words_query_mixin))
     print 'got %i token_docs documents' % len(token_docs)
 
     # use filtering here!!
@@ -77,14 +77,14 @@ if __name__ == '__main__':
 
     lda_processor = LdaProcessor(token_docs, no_below=min_token_freq, no_above=args.max_percent)
 
-    complaint_whitelist = lda_processor.id2word.doc2bow(complaint_words)
+    complaint_whitelist = lda_processor.id2word.doc2bow(search_words)
 
     lda_kwargs = {lda_arg:vars(args)[lda_arg] for lda_arg in ['eta','alpha']}
 
     lda_processor.train_lda(args.num_topics, **lda_kwargs)
 
     # make new complaint bow with re-trained id2word Dictionary
-    complaint_bow = lda_processor.id2word.doc2bow(complaint_words)
+    complaint_bow = lda_processor.id2word.doc2bow(search_words)
 
     print '\nthe top words in each topic'
     # print '\n------\n'.join(lda_processor.word_topics())
@@ -99,4 +99,4 @@ if __name__ == '__main__':
     postman.wipe_all_topics()
 
     # save the topics for all the docs that we selected before
-    postman.save_doc_topics_LdaProcessor(lda_processor, find_query_mixin=complaint_words_query_mixin)
+    postman.save_doc_topics_LdaProcessor(lda_processor, find_query_mixin=search_words_query_mixin)
