@@ -117,14 +117,16 @@ class PostManager(object):
 
         print 'merged %i documents into "%s"' % (result['nModified'], new_topic_id)
 
-    def save_doc_topics_Sklearn(self, nmf, vectorizer, find_query_mixin={}, topic_id_namer=str):
+    def save_doc_topics(self, topic_modeler, find_query_mixin={}, topic_id_namer=str):
         """
-        Uses the trained NMF (or maybe LatentDirichletAllocation) to assign
+        Uses the trained TopicModeler to assign
         all docs in the find query to their "strongest" single topic.
 
         topic_id_namer(int_id) : function which takes an int and maps it to a name.
             Default topic_id_namer is str, so you get: "0", "1", ... N. (Strings)
         """
+        nmf = topic_modeler.nmf
+        vectorizer = topic_modeler.vectorizer
         # only update docs that are the current subreddit,
         # and have tokens (via process_text.py)
         find_query = {'subreddit': self.subreddit, 'postwise.tokens':{'$exists':True}}
