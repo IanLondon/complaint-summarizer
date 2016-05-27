@@ -3,6 +3,8 @@
 import re
 import string
 import argparse
+import random
+from warnings import warn
 
 import config
 from mongo_setup import mongoclient
@@ -71,31 +73,60 @@ class PostManager(object):
         for doc in self.posts_read.find(find_query):
             yield doc['_id'], doc[document_level]['text']
 
-    def save_doc_topics_LdaProcessor(self, lda_processor, find_query_mixin={}):
-        """
-        Uses the trained LDA model in the LdaProcessor to classify all documents in the subreddit,
-        or all documents returned by the find_query_mixin query dict
-        """
-        # XXX: assumes postwise document_level
+    # XXX: Deprecated!
+    # def save_doc_topics_LdaProcessor(self, lda_processor, find_query_mixin={}):
+    #     """
+    #     Uses the trained LDA model in the LdaProcessor to classify all documents in the subreddit,
+    #     or all documents returned by the find_query_mixin query dict
+    #     """
+    #     # XXX: assumes postwise document_level
+    #
+    #     # add/modify user-specified key:vals to the find_query
+    #     find_query = {'subreddit': self.subreddit, 'postwise.tokens':{'$exists':True}}
+    #     find_query.update(find_query_mixin)
+    #
+    #     doc_count = 0
+    #     warn('Unlike save_doc_topics_Sklearn which stores topics as strings, save_doc_topics_LdaProcessor stores topics as ints.\nAlso, there is no "postwise.topic_assignment" field')
+    #     for doc in self.posts_read.find(find_query):
+    #         tokens = doc['postwise']['tokens']
+    #         doc_bow = lda_processor.id2word.doc2bow(tokens)
+    #         topic_distros = lda_processor.lda.get_document_topics(doc_bow, minimum_probability=0)
+    #         topic_dicts = [{'topic_id':topic_id, 'prob':prob} for topic_id, prob in topic_distros]
+    #         self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_dicts}}, upsert=True)
+    #         doc_count += 1
+    #     print 'Saved topic distros for %i documents' % doc_count
 
-        # add/modify user-specified key:vals to the find_query
-        find_query = {'subreddit': self.subreddit, 'postwise.tokens':{'$exists':True}}
-        find_query.update(find_query_mixin)
-
-        doc_count = 0
-        for doc in self.posts_read.find(find_query):
-            tokens = doc['postwise']['tokens']
-            doc_bow = lda_processor.id2word.doc2bow(tokens)
-            topic_distros = lda_processor.lda.get_document_topics(doc_bow, minimum_probability=0)
-            topic_dicts = [{'topic_id':topic_id, 'prob':prob} for topic_id, prob in topic_distros]
-            self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_dicts}}, upsert=True)
-            doc_count += 1
-        print 'Saved topic distros for %i documents' % doc_count
-
-    def save_doc_topics_Sklearn(self, nmf, vectorizer, find_query_mixin={}):
+    def merge_topics(self, topic_ids):
         """
-        Uses the trained NMF (or maybe LatentDirichletAllocation) to classify docs
+        Merges 2 or more topics into a single new topic.
+            Just re-assigns all the docs in those topics to new topic.
+            Eg merging the topics ["1","2","3"] will go into a new topic named "(1+2+3)".
+
+            You don't need to classify anything!
+
+            Note: topic "prob" information is LOST. Overwritten with an arbitrary number, 1
         """
+        new_topic_id = '(' + '+'.join(topic_ids) + ')'
+        arbitrary_prob = 1
+
+        result = self.posts_write.update(
+            {'subreddit':self.subreddit, 'postwise.topic_assignment.topic':{'$in':topic_ids}},
+            {'$set':{'postwise.topic_assignment.topic':new_topic_id,
+                'postwise.topic_assignment.prob':arbitrary_prob},
+            }, multi=True)
+
+        print 'merged %i documents into "%s"' % (result['nModified'], new_topic_id)
+
+    def save_doc_topics_Sklearn(self, nmf, vectorizer, find_query_mixin={}, topic_id_namer=str):
+        """
+        Uses the trained NMF (or maybe LatentDirichletAllocation) to assign
+        all docs in the find query to their "strongest" single topic.
+
+        topic_id_namer(int_id) : function which takes an int and maps it to a name.
+            Default topic_id_namer is str, so you get: "0", "1", ... N. (Strings)
+        """
+        # only update docs that are the current subreddit,
+        # and have tokens (via process_text.py)
         find_query = {'subreddit': self.subreddit, 'postwise.tokens':{'$exists':True}}
         find_query.update(find_query_mixin)
 
@@ -103,29 +134,56 @@ class PostManager(object):
         for doc in self.posts_read.find(find_query):
             text_body = doc['postwise']['text']
 
+            # Make a dict topic_id:topic_prob, where topic_id is determined by topic_id_namer function
             topic_distros = nmf.transform(vectorizer.transform([text_body]))[0]
-            topic_dicts = [{'topic_id':topic_id, 'prob':prob} for topic_id, prob in enumerate(topic_distros)]
-            self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_dicts}}, upsert=True)
+            topic_dict = {topic_id_namer(topic_id):prob for topic_id, prob in enumerate(topic_distros)}
+
+            # assign each doc to its most probable topic. In case of a tie, chose a random one.
+            # buffer_val allows small variation between two topics to count as a tie,
+            # eg 0.0323423 is close enough to 0.0323487
+            #
+            # individal prob values will shrink as number of topics grow,
+            # so the buffer should also shrink as number of topics grow.
+            buffer_val = 0.001/(len(topic_distros))
+            strongest_topics = [topic_id for topic_id, prob in topic_dict.items()
+                if (max(topic_distros) - prob < buffer_val)]
+
+            topic_assignment = random.choice(strongest_topics)
+
+            # DEBUG: introspect the docs with multiple topics
+            # if len(strongest_topics) != 1:
+            #     print 'DEBUG: Got ambigious topic, choosing randomly.'
+            #     print buffer_val
+            #     print topic_distros
+            #     print strongest_topics
+            #     print topic_assignment
+
+            # self.posts_write.update({'_id':doc['_id']},{'$set':{'postwise.topic_distro':topic_dict, 'postwise.topic_assignment':{'topic':topic_assignment,'prob':topic_dict[topic_assignment]}}}, upsert=True)
+            #
+            # ^ actually, don't persist the topic_distro. Just the assignment.
+            self.posts_write.update({'_id':doc['_id']},{'$set':{
+                'postwise.topic_assignment':{
+                    'topic':topic_assignment,'prob':topic_dict[topic_assignment]}}}, upsert=True)
+
             doc_count += 1
         print 'Saved topic distros for %i documents' % doc_count
 
     def wipe_all_topics(self):
-        """Remove the postwise.topic_distro values from all documents in the subreddit"""
-        doc_count = 0
-        for doc in self.posts_read.find({'subreddit':self.subreddit, 'postwise.topic_distro':{'$exists':True}}):
-            self.posts_write.update({'_id':doc['_id']},{'$unset':{'postwise.topic_distro':''}})
-            doc_count += 1
-        print 'wiped topics from %i documents' % doc_count
+        """
+        Remove the postwise.topic_distro and postwise.topic_distro fields
+        from all documents in the subreddit
+         """
+        # doc_count = self.posts_read.find({'subreddit':self.subreddit, 'postwise.topic_assignment':{'$exists':True}}).count()
+        doc_count = self.posts_write.update({'subreddit':self.subreddit, 'postwise.topic_assignment':{'$exists':True}},
+                {'$unset':{'postwise.topic_distro':True,'postwise.topic_assignment':True}}, multi=True)
 
-    def get_n_topics(self):
-        topic_distros = self.posts_read.find_one({'subreddit':self.subreddit,
-            'postwise.topic_distro':{'$exists':True},
-        })['postwise']['topic_distro']
+        print 'wiped topics from %i documents' % doc_count['nModified']
 
-        max_topic_id = max(topic_dist['topic_id'] for topic_dist in topic_distros)
-        n_topics = max_topic_id + 1
-        print '%i topics found' % n_topics
-        return n_topics
+    def get_topics(self):
+        topic_ids = self.posts_read.distinct('postwise.topic_assignment.topic', {'subreddit':self.subreddit})
+
+        print '%i topics found' % len(topic_ids)
+        return topic_ids
 
     # def fetch_raw_posts(self, how, min_comments=1):
     #     """
